@@ -1,0 +1,3 @@
+# Supabase secrets
+.env.local
+.env

@@ -26,6 +26,8 @@ interface MatchData {
         player2_id?: string; 
     };
     status: string;
+    event_category: string;
+    is_public_event: boolean;
 }
 
 interface ProfileData {
@@ -73,14 +75,45 @@ serve(async (req: Request) => {
             { auth: { autoRefreshToken: false, persistSession: false } }
         );
 
+        // --- Direct Deno Fetch Test ---
+        try {
+            const directFetchUrl = `${supabaseUrl}/rest/v1/matches?select=id&id=eq.${matchId}`;
+            console.log(`DEBUG: Direct Deno fetch test to URL: ${directFetchUrl}`);
+            const directResponse = await fetch(directFetchUrl, {
+                method: 'GET',
+                headers: {
+                    'apikey': serviceKey,
+                    'Authorization': `Bearer ${serviceKey}`,
+                    'Content-Type': 'application/json'
+                }
+            });
+            console.log(`DEBUG: Direct Deno fetch status: ${directResponse.status}`);
+            const directData = await directResponse.json();
+            console.log(`DEBUG: Direct Deno fetch data:`, JSON.stringify(directData, null, 2));
+            if (!directResponse.ok) {
+                 console.error(`DEBUG: Direct Deno fetch error: Status ${directResponse.status}`, directData);
+            }
+        } catch (e) {
+            console.error(`DEBUG: Direct Deno fetch EXCEPTION:`, e);
+        }
+
+        // --- 1. Fetch Match Data --- 
+        console.log(`DEBUG: Attempting to fetch match with ID: ${matchId}`); // Log before the call
+        console.log(`DEBUG: supabaseAdmin object initialized: ${!!supabaseAdmin}`); // Check if client is not null/undefined
+        console.log(`DEBUG: supabaseAdmin.from('matches').select(...).eq('id', matchId).single()`); // Log the structure of the call
+
         // --- 1. Fetch Match Data --- 
         const { data: matchData, error: matchError } = await supabaseAdmin
             .from('matches')
-            .select('id, player1_id, player2_id, score, status')
+            .select('id, player1_id, player2_id, score, status, event_category, is_public_event')
             .eq('id', matchId)
             .single<MatchData>();
 
-        if (matchError) throw new Error(`Match fetch error: ${matchError.message}`);
+        // This is where your current error points
+        if (matchError) {
+            console.error(`DEBUG: Match fetch error object:`, JSON.stringify(matchError, null, 2)); // Log the full error object
+            throw new Error(`Match fetch error: ${matchError.message}`);
+        }
         if (!matchData) throw new Error(`Match with ID ${matchId} not found.`);
 
         // --- 2. Validate Match Status --- 
@@ -143,7 +176,9 @@ serve(async (req: Request) => {
             player2Rating,
             player1GamesWon,
             player2GamesWon,
-            matchStatusForRating
+            matchStatusForRating,
+            matchData.event_category,
+            matchData.is_public_event
         );
 
         // --- 6. Prepare Data for Database Update --- 

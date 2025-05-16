@@ -24,6 +24,10 @@ const SCALING_FACTOR = 173.7178;
 // Epsilon for clamping expected score (to avoid exact 0 or 1)
 const CLAMP_EPSILON = 1e-1; 
 
+// NEW: Constants for event weighting
+const TIEBREAK_EVENT_BASE_WEIGHT = 0.6; 
+const PUBLIC_EVENT_MULTIPLIER = 1.5;
+
 // --- Interfaces ---
 
 /** Represents a player's rating parameters on the original scale. */
@@ -90,26 +94,59 @@ function expectScore(rating_g2: Glicko2Rating, other_rating_g2: Glicko2Rating, i
 /**
  * Calculates the weight of a match based on status and game scores.
  */
-function calculateMatchWeight(status: string, playerGames: number, opponentGames: number): number {
-  // TODO: Implement logic from python _calculate_match_weight
-  const COMPLETED = 'completed'; // Use constants if defined elsewhere
+function calculateMatchWeight(
+  status: string, // Overall status of the event
+  playerGames: number, // Games for standard, points for tiebreak
+  opponentGames: number, // Games for standard, points for tiebreak
+  eventCategory: string,
+  isPublicEvent: boolean
+): number {
+  let baseWeight = 0.0;
+
+  // Constants for status, ensure they are consistently defined or imported if used elsewhere
+  const COMPLETED = 'completed'; 
   const RETIRED = 'retired';
   const WALKOVER = 'walkover';
 
-  if (status === WALKOVER) {
-    return 0.0;
-  } else if (status === COMPLETED) {
-    return 1.0;
-  } else if (status === RETIRED) {
-    const total_games = playerGames + opponentGames;
-    if (total_games <= 0) return 0.0;
-    const threshold_games = 18.0;
-    const max_retirement_weight = 0.8;
-    const weight = Math.min(1.0, total_games / threshold_games) * max_retirement_weight;
-    return weight;
+  if (eventCategory === 'tiebreak_event') {
+    // For a tiebreak event, its 'status' is implicitly completed if scores are provided and not a walkover.
+    // The main check is if the event *itself* is a walkover, otherwise apply tiebreak weight.
+    if (status === WALKOVER) { // If a tiebreak entry itself is marked as a walkover (e.g. opponent didn't show for scheduled tiebreak)
+        baseWeight = 0.0;
+    } else {
+        baseWeight = TIEBREAK_EVENT_BASE_WEIGHT;
+    }
+  } else if (eventCategory === 'standard_match') {
+    // Existing logic for standard match status
+    if (status === WALKOVER) {
+      baseWeight = 0.0;
+    } else if (status === COMPLETED) {
+      baseWeight = 1.0;
+    } else if (status === RETIRED) {
+      const total_games = playerGames + opponentGames;
+      if (total_games <= 0) {
+        baseWeight = 0.0;
+      } else {
+        const threshold_games = 18.0; // Keep existing logic for standard match retirement
+        const max_retirement_weight = 0.8;
+        baseWeight = Math.min(1.0, total_games / threshold_games) * max_retirement_weight;
+      }
+    } else {
+      console.warn(`Unknown status for standard_match: ${status}`);
+      baseWeight = 0.0; // Unknown status for standard match
+    }
   } else {
-    return 0.0; // Unknown status
+    // Unknown event category
+    console.warn(`Unknown event category: ${eventCategory}`);
+    baseWeight = 0.0;
   }
+
+  // Apply public event multiplier if applicable and baseWeight is positive
+  if (isPublicEvent && baseWeight > 0) {
+    return baseWeight * PUBLIC_EVENT_MULTIPLIER;
+  }
+
+  return baseWeight;
 }
 
 /**
@@ -235,11 +272,19 @@ export function calculateGlickoTRUpdate(
   opponentRating: PlayerRating,
   playerGames: number,
   opponentGames: number,
-  status: string // e.g., 'completed', 'retired', 'walkover'
+  status: string, // e.g., 'completed', 'retired', 'walkover' - this is the overall status of the event
+  eventCategory: string,   // standard_match or tiebreak_event
+  isPublicEvent: boolean  
 ): { player_new: PlayerRating, opponent_new: PlayerRating } {
 
   // 1. Calculate Match Weight
-  const matchWeight = calculateMatchWeight(status, playerGames, opponentGames);
+  const matchWeight = calculateMatchWeight(
+    status, 
+    playerGames, 
+    opponentGames, 
+    eventCategory, 
+    isPublicEvent
+  );
 
   if (matchWeight <= 0) {
     // Return original ratings, potentially applying RD increase separately if needed later
